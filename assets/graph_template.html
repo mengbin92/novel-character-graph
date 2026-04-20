@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{TITLE}} - 人物关系图谱</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Noto Sans SC', sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            color: #eee;
+            overflow: hidden;
+        }
+        .title-font { font-family: 'Ma Shan Zheng', cursive; }
+        .glow { text-shadow: 0 0 20px rgba(249,115,22,0.5); }
+
+        /* ── Tab 内容（居中 + 滚动） ── */
+        .tab-content { display: none; overflow-y: auto; }
+        .tab-content.active {
+            display: block;
+            max-height: calc(100vh - 130px);
+            padding: 16px 20px;
+        }
+        .tab-content > * { max-width: 900px; margin-left: auto; margin-right: auto; }
+
+        /* ── Tab 按钮 ── */
+        .tab-btn {
+            padding: 10px 20px;
+            background: rgba(255,255,255,0.05);
+            border: none;
+            border-radius: 8px 8px 0 0;
+            color: #8888aa;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+        .tab-btn:hover { background: rgba(255,255,255,0.1); color: #aaaacc; }
+        .tab-btn.active { background: #1a1a35; color: #f0c060; border-bottom: 2px solid #f0c060; }
+
+        /* ── 图谱页（全屏自由画布） ── */
+        #graph-page {
+            position: relative;
+            width: 100vw;
+            height: calc(100vh - 130px);
+            overflow: visible;
+            cursor: default;
+        }
+        #graph-svg {
+            width: 100%;
+            height: 100%;
+            display: block;
+            overflow: visible;
+            cursor: grab;
+        }
+        #graph-svg:active { cursor: grabbing; }
+
+        /* ── 图例（浮动在右下角） ── */
+        #legend {
+            position: fixed;
+            top: 50%;
+            right: 16px;
+            transform: translateY(-50%);
+            background: rgba(20,20,46,0.95);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 12px;
+            padding: 14px;
+            font-size: 12px;
+            max-height: 80vh;
+            overflow-y: auto;
+            z-index: 20;
+            min-width: 150px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+        }
+        #legend h4 { color: #f0c060; margin-bottom: 10px; font-size: 13px; }
+        .legend-item { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; color: #aaaacc; }
+        .legend-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+
+        /* ── Hover Tooltip ── */
+        #tooltip {
+            position: fixed;
+            display: none;
+            z-index: 100;
+            pointer-events: none;
+            background: rgba(15,15,40,0.97);
+            border: 1px solid rgba(255,215,0,0.3);
+            border-radius: 12px;
+            padding: 14px 18px;
+            min-width: 220px;
+            max-width: 300px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+            backdrop-filter: blur(12px);
+        }
+        #tooltip.visible { display: block; }
+        .tt-name { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+        .tt-role { font-size: 12px; color: #aaaacc; margin-bottom: 8px; }
+        .tt-row { font-size: 12px; color: #8888aa; margin-top: 3px; }
+        .tt-row span { color: #ccc; }
+        .tt-rels { font-size: 11px; color: #666688; margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.07); padding-top: 6px; line-height: 1.7; }
+        .tt-level { display: inline-block; padding: 1px 7px; border-radius: 8px; font-size: 11px; font-weight: bold; margin-bottom: 6px; }
+
+        /* ── 信息面板（点击后固定显示） ── */
+        #info-panel {
+            position: absolute;
+            bottom: 16px;
+            left: 16px;
+            right: 200px;
+            background: rgba(20,20,46,0.95);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 12px;
+            padding: 16px;
+            display: none;
+            z-index: 10;
+        }
+        #info-panel.visible { display: flex; gap: 24px; }
+        .info-main { flex: 1; min-width: 0; }
+        .info-title { font-size: 18px; font-weight: 700; color: #f0c060; margin-bottom: 6px; }
+        .info-desc { font-size: 13px; color: #aaaacc; line-height: 1.6; }
+        .info-close { background: none; border: none; color: #8888aa; cursor: pointer; font-size: 20px; padding: 4px; align-self: flex-start; }
+        .info-close:hover { color: #fff; }
+        .info-stats { display: flex; gap: 16px; margin-top: 10px; font-size: 12px; color: #666688; }
+        .info-related { min-width: 200px; font-size: 12px; color: #8888aa; line-height: 1.8; }
+
+        /* ── 统一滚动条 ── */
+        .tab-content.active::-webkit-scrollbar,
+        .cards-scroll::-webkit-scrollbar {
+            width: 6px;
+        }
+        .tab-content.active::-webkit-scrollbar-track,
+        .cards-scroll::-webkit-scrollbar-track {
+            background: rgba(255,255,255,0.04);
+        }
+        .tab-content.active::-webkit-scrollbar-thumb,
+        .cards-scroll::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.15);
+            border-radius: 3px;
+        }
+        .tab-content.active::-webkit-scrollbar-thumb:hover,
+        .cards-scroll::-webkit-scrollbar-thumb:hover {
+            background: rgba(255,255,255,0.25);
+        }
+
+        /* ── 人物介绍页 ── */
+        .cards-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 14px;
+            padding: 12px;
+        }
+        .char-card {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 14px;
+            padding: 16px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .char-card:hover {
+            transform: translateY(-4px);
+            border-color: rgba(255,215,0,0.35);
+            box-shadow: 0 12px 30px rgba(0,0,0,0.4);
+            background: rgba(255,255,255,0.08);
+        }
+        .char-name { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+        .char-role, .char-cul, .char-per, .char-desc, .char-rels { font-size: 12px; color: #8888aa; margin-top: 4px; line-height: 1.5; }
+        .char-rels { color: #666688; font-size: 11px; margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 6px; }
+        .level-header {
+            font-size: 15px;
+            font-weight: 700;
+            margin: 20px 0 10px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+
+        /* ── 势力格局页 ── */
+        .faction-item { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+        .faction-info { width: 100px; font-size: 14px; display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+        .faction-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+        .faction-bar { flex: 1; height: 8px; background: rgba(255,255,255,0.08); border-radius: 4px; overflow: hidden; }
+        .faction-fill { height: 100%; border-radius: 4px; transition: width 0.5s; }
+
+        /* ── 漫画占位 ── */
+        .comic-placeholder { text-align: center; padding: 80px; color: #666688; font-size: 20px; }
+        .comic-placeholder span { display: block; font-size: 14px; margin-top: 12px; color: #444466; }
+
+        /* ── SVG 节点样式 ── */
+        .node circle { cursor: pointer; transition: filter 0.2s; }
+        .node:hover circle { filter: brightness(1.3); }
+        .node text { pointer-events: none; font-size: 11px; fill: #ccc; }
+        .node .node-label { font-size: 12px; fill: #e0e0e0; font-weight: 500; }
+        .node .node-sublabel { font-size: 9px; fill: #8888aa; }
+        .link { stroke-opacity: 0.5; }
+        .link-label { font-size: 9px; fill: #666688; pointer-events: none; }
+
+        /* ── 统计栏 ── */
+        #stats-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(13,13,36,0.95);
+            border-top: 1px solid rgba(255,255,255,0.06);
+            padding: 8px 20px;
+            font-size: 12px;
+            color: #666688;
+            display: flex;
+            gap: 24px;
+            z-index: 20;
+            height: 36px;
+        }
+        #stats-bar span { color: #aaaacc; }
+    </style>
+</head>
+<body>
+
+<!-- ── Hover Tooltip ── -->
+<div id="tooltip">
+    <div class="tt-name" id="tt-name"></div>
+    <div class="tt-role" id="tt-role"></div>
+    <div id="tt-level-wrap" style="margin-bottom:6px;"></div>
+    <div class="tt-row">修为：<span id="tt-cul"></span></div>
+    <div class="tt-row">性格：<span id="tt-per"></span></div>
+    <div class="tt-row">阵营：<span id="tt-faction"></span></div>
+    <div class="tt-desc" id="tt-desc" style="font-size:11px;color:#8888aa;margin-top:6px;line-height:1.5;"></div>
+    <div class="tt-rels" id="tt-rels"></div>
+</div>
+
+<!-- ── 标题区 ── -->
+<div style="text-align:center; padding: 24px 20px 8px; background: linear-gradient(180deg, rgba(13,13,36,0.9) 0%, transparent 100%);">
+    <h1 class="title-font text-5xl" style="background: linear-gradient(90deg,#f0c060,#ff9060); -webkit-background-clip: text; -webkit-text-fill-color: transparent; text-shadow: none;">{{TITLE}}</h1>
+    <p style="color:#8888aa; font-size:13px; margin-top:4px;">{{SUBTITLE}}</p>
+</div>
+
+<!-- ── 标签导航 ── -->
+<div style="display:flex; gap:4px; padding: 0 20px; background: rgba(13,13,36,0.7); border-bottom: 1px solid rgba(255,255,255,0.06); justify-content: center; flex-wrap: wrap;">
+    <button class="tab-btn active" onclick="switchTab('graph')" id="btn-graph">🕸️ 关系图谱</button>
+    <button class="tab-btn" onclick="switchTab('chars')" id="btn-chars">👤 人物介绍</button>
+    <button class="tab-btn" onclick="switchTab('timeline')" id="btn-timeline">📜 剧情时间线</button>
+    <button class="tab-btn" onclick="switchTab('world')" id="btn-world">🌍 势力格局</button>
+    <button class="tab-btn" onclick="switchTab('comic')" id="btn-comic">🎨 漫画设定</button>
+</div>
+
+<!-- ── Tab: 关系图谱 ── -->
+<div id="tab-graph" class="tab-content active" style="padding:0; overflow:visible;">
+    <div id="graph-page">
+        <div id="legend">
+            <h4>图例</h4>
+            <div class="legend-item"><div class="legend-dot" style="background:#ffd700;"></div> S级 · 核心主角</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#3498db;"></div> A级 · 重要人物</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#2ecc71;"></div> B级 · 次要人物</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#95a5a6;"></div> C级 · 路人甲</div>
+            <div style="margin:8px 0 4px; border-top:1px solid rgba(255,255,255,0.06);"></div>
+            <div class="legend-item"><div class="legend-dot" style="background:#feca57;"></div> 爱情/血缘</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#a55eea;"></div> 师徒</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#1dd1a1;"></div> 盟友/朋友</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#ff6b6b;"></div> 敌对</div>
+            <div style="margin:6px 0; font-size:10px; color:#555566; text-align:center;">拖拽节点 · 滚轮缩放</div>
+        </div>
+        <svg id="graph-svg"></svg>
+        <!-- 信息面板 -->
+        <div id="info-panel">
+            <button class="info-close" onclick="closeInfo()">×</button>
+            <div class="info-main">
+                <div class="info-title" id="info-title"></div>
+                <div class="info-desc" id="info-desc"></div>
+                <div class="info-stats">
+                    <span>关系：<b id="info-rels-count">0</b></span>
+                    <span>层级：<b id="info-level"></b></span>
+                </div>
+            </div>
+            <div class="info-related" id="info-related"></div>
+        </div>
+        <div id="stats-bar">
+            人物总数：<span id="stat-chars">{{TOTAL_CHARS}}</span>
+            &nbsp;·&nbsp; 关系数：<span id="stat-rels">{{TOTAL_RELS}}</span>
+            &nbsp;·&nbsp; 💡 点击节点查看详情 · 拖拽节点重新布局 · 滚轮缩放
+        </div>
+    </div>
+</div>
+
+<!-- ── Tab: 人物介绍 ── -->
+<div id="tab-chars" class="tab-content">
+    <div class="cards-scroll" style="max-height:calc(100vh - 130px); overflow-y:auto;">
+        <div style="padding:8px 16px; font-size:12px; color:#666688; border-bottom:1px solid rgba(255,255,255,0.05); max-width:none;">
+            共 <b style="color:#f0c060">{{TOTAL_CHARS}}</b> 个人物 · 点击人物卡定位到图谱节点
+        </div>
+        {{CARDS_HTML}}
+    </div>
+</div>
+
+<!-- ── Tab: 剧情时间线 ── -->
+<div id="tab-timeline" class="tab-content">
+    <div class="cards-scroll" style="max-height:calc(100vh - 130px); overflow-y:auto;">
+        {{TIMELINE_HTML}}
+    </div>
+</div>
+
+<!-- ── Tab: 势力格局 ── -->
+<div id="tab-world" class="tab-content">
+    <div class="cards-scroll" style="max-height:calc(100vh - 130px); overflow-y:auto;">
+        {{WORLD_HTML}}
+    </div>
+</div>
+
+<!-- ── Tab: 漫画设定 ── -->
+<div id="tab-comic" class="tab-content">
+    <div class="cards-scroll" style="max-height:calc(100vh - 130px); overflow-y:auto;">
+        {{COMIC_HTML}}
+    </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════
+// 数据（由 generate_html.py 注入）
+// ═══════════════════════════════════════════════
+const NODES = {{NODES}};
+const LINKS = {{LINKS}};
+const FACTION_COLORS = {{FACTION_COLORS}};
+const FACTION_NAMES = {{FACTION_NAMES}};
+const CHAR_DETAIL = {{CHAR_DETAIL}};
+
+const LEVEL_COLORS = { "S": "#ffd700", "A": "#3498db", "B": "#2ecc71", "C": "#95a5a6" };
+
+// ═══════════════════════════════════════════════
+// 标签页切换
+// ═══════════════════════════════════════════════
+function switchTab(tab) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    document.getElementById('btn-' + tab).classList.add('active');
+    document.getElementById('tab-' + tab).classList.add('active');
+    if (tab === 'graph') {
+        setTimeout(initGraph, 50);
+    }
+}
+
+// ═══════════════════════════════════════════════
+// D3 力导向图
+// ═══════════════════════════════════════════════
+let simulation, svg, g, zoom;
+let nodeElements, linkElements;
+
+function initGraph() {
+    const svgDom = document.getElementById('graph-svg');
+    if (!svgDom || NODES.length === 0) return;
+
+    // 避免重复初始化
+    if (simulation) {
+        simulation.stop();
+        d3.select(svgDom).selectAll('*').remove();
+    }
+
+    const width = svgDom.clientWidth || 1200;
+    const height = svgDom.clientHeight || 700;
+
+    svg = d3.select(svgDom)
+        .attr("width", width)
+        .attr("height", height);
+
+    // 缩放（滚轮缩放 + 拖拽平移）
+    zoom = d3.zoom()
+        .scaleExtent([0.1, 5])
+        .on("zoom", (event) => {
+            g.attr("transform", event.transform);
+        });
+    svg.call(zoom);
+    // 禁用右键菜单（用于平移画布）
+    svg.on("contextmenu", event => event.preventDefault());
+
+    g = svg.append("g");
+
+    // 箭头标记
+    svg.append("defs").selectAll("marker")
+        .data(LINKS)
+        .enter().append("marker")
+        .attr("id", (d, i) => "arrow-" + i)
+        .attr("viewBox", "0 -4 8 8")
+        .attr("refX", 16)
+        .attr("refY", 0)
+        .attr("markerWidth", 6)
+        .attr("markerHeight", 6)
+        .attr("orient", "auto")
+        .append("path")
+        .attr("d", "M0,-4L8,0L0,4")
+        .attr("fill", d => d.color)
+        .attr("opacity", 0.6);
+
+    // 深拷贝防止 D3 修改原始数据
+    const nodesCopy = NODES.map(n => ({ ...n }));
+    const linksCopy = LINKS.map(l => ({ ...l }));
+
+    // 力模拟
+    simulation = d3.forceSimulation(nodesCopy)
+        .force("link", d3.forceLink(linksCopy).id(d => d.id).distance(120).strength(0.4))
+        .force("charge", d3.forceManyBody().strength(-350))
+        .force("center", d3.forceCenter(width / 2, height / 2))
+        .force("collision", d3.forceCollide().radius(d => d.radius + 20))
+        .force("x", d3.forceX(width / 2).strength(0.05))
+        .force("y", d3.forceY(height / 2).strength(0.05));
+
+    // 连线
+    linkElements = g.append("g")
+        .selectAll("line")
+        .data(linksCopy)
+        .enter().append("line")
+        .attr("class", "link")
+        .attr("stroke", d => d.color)
+        .attr("stroke-width", d => d.width)
+        .attr("marker-end", (d, i) => "url(#arrow-" + i + ")");
+
+    // 节点组
+    const nodeGroup = g.append("g")
+        .selectAll("g")
+        .data(nodesCopy)
+        .enter().append("g")
+        .attr("class", "node")
+        .call(drag(simulation))
+        .on("mouseover", showTooltip)
+        .on("mousemove", moveTooltip)
+        .on("mouseout", hideTooltip)
+        .on("click", (event, d) => {
+            event.stopPropagation();
+            showInfo(d);
+        });
+
+    // 节点外圈
+    nodeGroup.append("circle")
+        .attr("r", d => d.radius)
+        .attr("fill", d => (LEVEL_COLORS[d.level] || "#aaa") + "30")
+        .attr("stroke", d => LEVEL_COLORS[d.level] || "#aaa")
+        .attr("stroke-width", 2);
+
+    // 节点内圆
+    nodeGroup.append("circle")
+        .attr("r", d => d.radius * 0.55)
+        .attr("fill", d => LEVEL_COLORS[d.level] || "#aaa");
+
+    // 节点首字（2字名显示首字，3字以上显示末字以示区分）
+    nodeGroup.append("text")
+        .attr("text-anchor", "middle")
+        .attr("dy", "0.35em")
+        .attr("fill", "#fff")
+        .attr("font-size", d => d.radius * 0.5)
+        .attr("font-weight", "bold")
+        .text(d => d.id.length <= 2 ? d.id.slice(0, 1) : d.id.slice(1, 2));
+
+    // 节点名称（全名，加大字体）
+    nodeGroup.append("text")
+        .attr("class", "node-label")
+        .attr("text-anchor", "middle")
+        .attr("dy", d => d.radius + 14)
+        .attr("font-size", "12px")
+        .text(d => d.id);
+
+    // 节点身份
+    nodeGroup.append("text")
+        .attr("class", "node-sublabel")
+        .attr("text-anchor", "middle")
+        .attr("dy", d => d.radius + 27)
+        .text(d => (d.role || "").slice(0, 10));
+
+    // 拖拽行为
+    function drag(sim) {
+        function dragstarted(event, d) {
+            if (!event.active) sim.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+        }
+        function dragged(event, d) {
+            d.fx = event.x;
+            d.fy = event.y;
+        }
+        function dragended(event, d) {
+            if (!event.active) sim.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+        }
+        return d3.drag()
+            .on("start", dragstarted)
+            .on("drag", dragged)
+            .on("end", dragended);
+    }
+
+    // Tick 更新位置
+    simulation.on("tick", () => {
+        linkElements
+            .attr("x1", d => d.source.x)
+            .attr("y1", d => d.source.y)
+            .attr("x2", d => d.target.x)
+            .attr("y2", d => d.target.y);
+
+        nodeGroup.attr("transform", d => `translate(${d.x},${d.y})`);
+    });
+}
+
+// ═══════════════════════════════════════════════
+// Tooltip（悬停）
+// ═══════════════════════════════════════════════
+function showTooltip(event, d) {
+    const tt = document.getElementById('tooltip');
+    const detail = d.tooltip || CHAR_DETAIL[d.id] || {};
+
+    document.getElementById('tt-name').textContent = d.id;
+    document.getElementById('tt-name').style.color = LEVEL_COLORS[d.level] || "#ffd700";
+    document.getElementById('tt-role').textContent = detail.role || "—";
+    document.getElementById('tt-cul').textContent = detail.cultivation || "—";
+    document.getElementById('tt-per').textContent = detail.personality || "—";
+    document.getElementById('tt-faction').textContent = FACTION_NAMES[detail.faction] || "其他";
+    document.getElementById('tt-desc').textContent = detail.description || "暂无描述";
+    document.getElementById('tt-rels').textContent = detail.related || "—";
+
+    const levelWrap = document.getElementById('tt-level-wrap');
+    const lv = detail.level || d.level || "C";
+    const lvColor = LEVEL_COLORS[lv] || "#aaa";
+    levelWrap.innerHTML = `<span class="tt-level" style="background:${lvColor}30;color:${lvColor};border:1px solid ${lvColor}50">${lv}级 · ${detail.rel_count || 0}条关系</span>`;
+
+    tt.classList.add('visible');
+    moveTooltip(event);
+}
+
+function moveTooltip(event) {
+    const tt = document.getElementById('tooltip');
+    const x = event.clientX + 14;
+    const y = event.clientY - 10;
+    const rect = tt.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    tt.style.left = (x + rect.width > vw ? event.clientX - rect.width - 14 : x) + 'px';
+    tt.style.top = (y + rect.height > vh ? vh - rect.height - 4 : y) + 'px';
+}
+
+function hideTooltip() {
+    document.getElementById('tooltip').classList.remove('visible');
+}
+
+// ═══════════════════════════════════════════════
+// 信息面板（点击固定显示）
+// ═══════════════════════════════════════════════
+function showInfo(d) {
+    const detail = d.tooltip || CHAR_DETAIL[d.id] || {};
+    const panel = document.getElementById('info-panel');
+
+    document.getElementById('info-title').textContent = d.id;
+    document.getElementById('info-title').style.color = LEVEL_COLORS[d.level] || "#ffd700";
+    document.getElementById('info-desc').textContent = detail.description || "暂无描述";
+    document.getElementById('info-rels-count').textContent = detail.rel_count || 0;
+    document.getElementById('info-level').textContent = detail.level || d.level || "C";
+    document.getElementById('info-level').style.color = LEVEL_COLORS[detail.level || d.level] || "#aaa";
+
+    const related = detail.related || "—";
+    document.getElementById('info-related').innerHTML = '<b style="color:#f0c060; font-size:11px;">相关人物</b><br>' + related.replace(/;/g, '<br>');
+
+    panel.classList.add('visible');
+}
+
+function closeInfo() {
+    document.getElementById('info-panel').classList.remove('visible');
+}
+
+// 点击 SVG 空白处关闭面板
+document.getElementById('graph-svg')?.addEventListener('click', (e) => {
+    if (e.target.tagName === 'svg') closeInfo();
+});
+
+// ═══════════════════════════════════════════════
+// 人物介绍页 → 图谱节点聚焦
+// ═══════════════════════════════════════════════
+function focusNode(name) {
+    switchTab('graph');
+    // 等待图谱渲染后高亮
+    setTimeout(() => {
+        const node = NODES.find(n => n.id === name);
+        if (node) showInfo(node);
+
+        // 将节点移到中心
+        if (simulation) {
+            const svgDom = document.getElementById('graph-svg');
+            const width = svgDom.clientWidth;
+            const height = svgDom.clientHeight;
+            simulation.force("x", d3.forceX(width / 2).strength(0.15));
+            simulation.force("y", d3.forceY(height / 2).strength(0.15));
+            simulation.alpha(0.5).restart();
+        }
+    }, 100);
+}
+
+// ═══════════════════════════════════════════════
+// 初始化
+// ═══════════════════════════════════════════════
+window.addEventListener('DOMContentLoaded', () => {
+    if (NODES.length > 0) {
+        initGraph();
+    }
+});
+window.addEventListener('resize', () => {
+    if (simulation) {
+        const svgDom = document.getElementById('graph-svg');
+        simulation.force("center", d3.forceCenter(svgDom.clientWidth / 2, svgDom.clientHeight / 2));
+        simulation.alpha(0.3).restart();
+    }
+});
+</script>
+</body>
+</html>
