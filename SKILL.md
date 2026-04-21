@@ -263,6 +263,75 @@ male vocalist with raw gritty tone, rhythmic drums with folk elements, 85BPM G m
 
 ---
 
+## 第八步：MiniMax Music 2.6 API 主题曲生成
+
+> 当用户要求生成主题曲且提供了 MiniMax API Key 时，使用本节
+> **API Key 格式**：`sk-cp-xxxxxxxxx`
+
+### MiniMax Music API 调用模板
+
+```python
+import urllib.request
+import json
+
+api_key = "sk-cp-你的APIKey"
+url = "https://api.minimaxi.com/v1/music_generation"
+
+payload = {
+    "model": "music-2.6",
+    "prompt": "Epic Dark Fantasy Orchestral, Chinese Xianxia, War Anthem, ...",
+    "lyrics": "[Intro]\n歌词内容...\n[Chorus]\n核心高潮歌词...",
+    "audio_setting": {
+        "sample_rate": 44100,
+        "bitrate": 256000,
+        "format": "mp3"
+    },
+    "output_format": "url"
+}
+
+data = json.dumps(payload).encode('utf-8')
+req = urllib.request.Request(url, data=data, headers={
+    'Content-Type': 'application/json',
+    'Authorization': f'Bearer {api_key}'
+}, method='POST')
+
+with urllib.request.urlopen(req, timeout=120) as response:
+    result = json.loads(response.read().decode('utf-8'))
+    audio_url = result["data"]["audio"]
+    urllib.request.urlretrieve(audio_url, "主题曲.mp3")
+```
+
+### 字段说明
+
+| 字段 | 说明 | 示例 |
+|------|------|------|
+| `model` | 模型名称，固定 | `"music-2.6"` |
+| `prompt` | 风格描述（英文） | `"Epic Dark Fantasy Orchestral, Chinese Xianxia..."` |
+| `lyrics` | 中文歌词，带结构标签 | `[Intro]`/`[Verse]`/`[Chorus]`/`[Bridge]`/`[Outro]` |
+| `audio_setting` | 音频参数 | sample_rate/ bitrate/ format |
+| `output_format` | 输出格式，固定 | `"url"`（返回下载链接） |
+
+### 歌词结构标签
+
+```
+[Intro] → [Verse] → [Pre-Chorus] → [Chorus] → [Post-Chorus] → [Bridge] → [Verse] → [Chorus] → [Outro]
+```
+
+### 推荐歌词长度
+
+- **最短**：30-50字（可生成约30秒）
+- **适中**：80-150字（可生成约60秒）
+- **完整版**：200-300字（可生成约2-3分钟，需更长timeout）
+
+### 常见错误
+
+| 错误信息 | 原因 | 解决方案 |
+|---------|------|---------|
+| `token not match group` | GroupId 不匹配 | 使用正确的GroupId参数 |
+| `timeout` | 歌词过长/网络慢 | 缩短歌词或增加timeout |
+| `status_code: 1003` | 参数错误 | 检查payload格式 |
+
+
 ## 脚本说明
 
 ### `parse.py`（输入处理）
